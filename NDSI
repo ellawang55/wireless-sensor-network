@@ -1,0 +1,293 @@
+
+var image = ee.Image(ee.ImageCollection("LANDSAT/LT05/C01/T1_SR")
+    .filterBounds(boundary)
+    .filterDate('1986-01-01', '1986-02-28')
+    .sort('CLOUD_COVER')
+    .first());
+Map.addLayer(image, {bands: ['B3', 'B2', 'B1'],min:0, max: 3000}, 'True colour image');
+
+//ndsi
+// Use the normalizedDifference(A, B) to compute (A - B) / (A + B)
+var ndsi = image.normalizedDifference(['B2', 'B5']);
+
+// Make a palette: a list of hex strings.
+var palette = '000088, 0000FF, 8888FF, FFFFFF';
+
+// Display the input image and the NDVI derived from it.
+
+Map.addLayer(ndsi, {min: 0, max: 1, palette: palette}, 'NDSI');
+
+
+// Plot a time series of a band's value in regions of the American West.
+
+var COLOR = {
+  R1: 'ff0000',
+  R2: '0000ff',
+  R3: '00ff00'
+};
+
+
+var SCN = ee.Feature(  // Tahoe National Forest.
+    ee.Geometry.Rectangle(-120.074,38.75, -120.06,38.74
+),
+    {label: 'SCN'});
+var ECP = ee.Feature(  // Black Rock Desert.
+    ee.Geometry.Rectangle(-120.086,38.853, -120.072,38.843
+),
+    {label: 'ECP'});
+var MTL = ee.Feature(    // San Francisco.
+    ee.Geometry.Rectangle(-120.335,39.292, -120.321,39.282
+),
+    {label: 'MTL'});
+var CAP = ee.Feature(  // Tahoe National Forest.
+    ee.Geometry.Rectangle(-120.049,38.716, -120.035,38.706
+),
+    {label: 'CAP'});
+var ALP = ee.Feature(    // San Francisco.
+    ee.Geometry.Rectangle(-120.223,38.809, -120.209,38.799
+),
+    {label: 'ALP'});
+var DUN = ee.Feature(    // San Francisco.
+    ee.Geometry.Rectangle(-120.517,39.159, -120.503,39.149
+),
+    {label: 'DUN'});
+var VVL = ee.Feature(  // Tahoe National Forest.
+    ee.Geometry.Rectangle(-120.313,38.949, -120.299,38.939
+),
+    {label: 'VVL'});
+var ONN = ee.Feature(  // Black Rock Desert.
+    ee.Geometry.Rectangle(-120.363,39.279, -120.349,39.269
+),
+    {label: 'ONN'});
+var RBB = ee.Feature(  // Tahoe National Forest.
+    ee.Geometry.Rectangle(-120.386,38.917, -120.372,38.907
+),
+    {label: 'RBB'});
+var BTP = ee.Feature(  // Black Rock Desert.
+    ee.Geometry.Rectangle(-120.584,39.1, -120.57,39.09
+),
+    {label: 'BTP'});
+    
+    
+    
+    
+    
+var westernRegions = new ee.FeatureCollection([SCN,ECP,MTL,CAP,ALP,DUN,VVL,ONN,RBB,BTP]);
+
+/**
+ * Function to mask clouds based on the pixel_qa band of Landsat SR data.
+ * @param {ee.Image} image Input Landsat SR image
+ * @return {ee.Image} Cloudmasked Landsat image
+ */
+var cloudMaskL457 = function(image) {
+  var qa = image.select('pixel_qa');
+  // If the cloud bit (5) is set and the cloud confidence (7) is high
+  // or the cloud shadow bit is set (3), then it's a bad pixel.
+  var cloud = qa.bitwiseAnd(1 << 5)
+                  .and(qa.bitwiseAnd(1 << 7))
+                  .or(qa.bitwiseAnd(1 << 3));
+  // Remove edge pixels that don't occur in all bands
+  var mask2 = image.mask().reduce(ee.Reducer.min());
+  return image.updateMask(cloud.not()).updateMask(mask2);
+};
+
+function maskL8sr(image) {
+  // Bits 3 and 5 are cloud shadow and cloud, respectively.
+  var cloudShadowBitMask = 1 << 3;
+  var cloudsBitMask = 1 << 5;
+
+  // Get the pixel QA band.
+  var qa = image.select('pixel_qa');
+
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
+      .and(qa.bitwiseAnd(cloudsBitMask).eq(0));
+
+  // Return the masked image, scaled to reflectance, without the QA bands.
+  return image.updateMask(mask).divide(10000)
+      .select("B[0-9]*")
+      .copyProperties(image, ["system:time_start"]);
+}
+
+//image landsat
+var collection5 = ee.ImageCollection('LANDSAT/LT05/C01/T1_SR')
+                  .filterDate('1984-10-01', '2012-09-30')
+                  .filterBounds(boundary)
+                  .limit(50000)
+                  .filterMetadata('CLOUD_COVER','less_than',10)
+                  .sort('IMAGE_QUALITY')
+                  .map(cloudMaskL457);
+                  
+var collection8 = ee.ImageCollection("LANDSAT/LC08/C01/T1_SR")
+                  .filterDate('2012-10-01', '2019-09-30')
+                  .filterBounds(boundary)
+                  .limit(50000)
+                  
+                  .sort('IMAGE_QUALITY')
+                  .map(maskL8sr);
+
+//add a function for NDVI calculation in landsat5 & apply it to the collection using collection.map():
+var addNDSI5 = function(image) {
+  return image.addBands(image.normalizedDifference(['B2', 'B5']));
+};
+//add a function for NDVI calculation in landdsat8 & apply it to the collection using collection.map():
+var addNDSI8 = function(image) {
+  return image.addBands(image.normalizedDifference(['B3', 'B6']));
+};
+
+var ndsiadd5 = collection5.map(addNDSI5);
+var ndsicollection5 = ndsiadd5.select('nd');
+
+var ndsiadd8 = collection8.map(addNDSI8);
+var ndsicollection8 = ndsiadd8.select('nd');
+
+// Get ndsi5
+var ndsi5 = ndsiadd5 .filterBounds(westernRegions)
+    .filterDate('1985-01-25', '2010-12-25')
+    .select('nd');
+
+// Get ndsi8
+var ndsi8 = ndsiadd8 .filterBounds(westernRegions)
+    .filterDate('2011-01-25', '2019-12-25')
+    .select('nd');
+
+var tempTimeSeries = ui.Chart.image.seriesByRegion({
+  imageCollection: ndsi5,
+  regions: westernRegions,
+  reducer: ee.Reducer.mean(),
+  band: 'nd',
+  scale: 200,
+  xProperty: 'system:time_start',
+  seriesProperty: 'label'
+});
+tempTimeSeries.setChartType('ScatterChart');
+tempTimeSeries.setOptions({
+  title: 'ndsi5 over time in regions of the American West',
+  vAxis: {
+    title: 'Temperature (Celsius)'
+  },
+  lineWidth: 1,
+  pointSize: 4,
+  series: {
+    0: {color: COLOR.R1},
+    1: {color: COLOR.R2},
+    2: {color: COLOR.R3}
+  }
+});
+
+print(tempTimeSeries);
+
+var tempTimeSeries8 = ui.Chart.image.seriesByRegion({
+  imageCollection: ndsi8,
+  regions: westernRegions,
+  reducer: ee.Reducer.mean(),
+  band: 'nd',
+  scale: 200,
+  xProperty: 'system:time_start',
+  seriesProperty: 'label'
+});
+tempTimeSeries8.setChartType('ScatterChart');
+tempTimeSeries8.setOptions({
+  title: 'ndsi8 over time in regions of the American West',
+  vAxis: {
+    title: 'Temperature (Celsius)'
+  },
+  lineWidth: 1,
+  pointSize: 4,
+  series: {
+    0: {color: COLOR.R1},
+    1: {color: COLOR.R2},
+    2: {color: COLOR.R3}
+  }
+});
+
+print(tempTimeSeries8);
+
+Map.addLayer(SCN, {color: "ff0000"});
+Map.addLayer(ECP, {color: "ffa500"});
+Map.addLayer(MTL, {color: "ffd700"});
+Map.addLayer(CAP, {color: "caff70"});
+Map.addLayer(ALP, {color: "006400"});
+Map.addLayer(DUN, {color: "00ffff"});
+Map.addLayer(VVL, {color: "008b8b"});
+Map.addLayer(ONN, {color: "bf3eff"});
+Map.addLayer(RBB, {color: "ffefdb"});
+Map.addLayer(BTP, {color: "0000ff"});
+
+var features = ee.FeatureCollection(table);
+
+Map.addLayer(features, {color: "f0f8ff"});
+
+
+
+Map.setCenter(-121, 39.4, 6);
+
+
+//add legend
+// set position of panel
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '8px 4px'
+  }
+});
+
+// Create legend title
+var legendTitle = ui.Label({
+  value: 'ROI of WSN cluster',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+
+// Add the title to the panel
+legend.add(legendTitle);
+    
+// Creates and styles 1 row of the legend.
+var makeRow = function(color, name) {
+      
+      // Create the label that is actually the colored box.
+      var colorBox = ui.Label({
+        style: {
+          backgroundColor: '#' + color,
+          // Use padding to give the box height and width.
+          padding: '8px',
+          margin: '0 0 4px 0'
+        }
+      });
+      
+      // Create the label filled with the description text.
+      var description = ui.Label({
+        value: name,
+        style: {margin: '0 0 4px 6px'}
+      });
+      
+      // return the panel
+      return ui.Panel({
+        widgets: [colorBox, description],
+        layout: ui.Panel.Layout.Flow('horizontal')
+      });
+};
+
+//  Palette with the colors
+var palette =['ff0000', 'd2691e', 'ffd700','caff70','006400','00ffff','000000','bf3eff','ffefdb','0000ff'];
+
+// name of the legend
+var names = ['SCN','ECPr','MTL','CAP','ALP','DUN','VVL','ONN','RBB','BTP'];
+
+
+
+
+
+// Add color and and names
+for (var i = 0; i < 10; i++) {
+  legend.add(makeRow(palette[i], names[i]));
+  }  
+
+// add legend to map (alternatively you can also print the legend to the console)  
+Map.add(legend);  
+
+Export.table.toDrive(westernRegions,roi,"","","SHP","")
